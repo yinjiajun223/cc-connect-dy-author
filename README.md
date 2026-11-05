@@ -1,10 +1,10 @@
-# dy-author：把抖音作者作品整理进 Obsidian
+# 抖音作者作品批量入库（/dy-author）
 
-面向 **cc-connect + Claude Code 等可读写本地文件、执行 Python 的 Agent** 的独立 Skill。发送一次 `/dy-author 作品链接`，从该作品识别作者，分页获取公开作品，准备完整视频转写或图文材料，由当前 Agent 提炼知识并逐条存入自己的 Obsidian Vault。
+从作品链接识别抖音作者，分页获取其可访问的公开视频与图文，通过分批处理、作品 ID 去重和运行检查点，将内容整理为按主题组织的 Obsidian 知识笔记，同步维护作者文档、知识索引和导入日志。
 
-**语义提炼和笔记写作由当前 Agent 完成**；本仓库脚本负责材料获取、队列、查重、校验和事务保存。安装与使用流程均在本仓库中提供。
+当前 Agent 负责内容理解、核心知识提炼与笔记写作；本项目脚本负责内容获取、去重、校验和事务保存。核心流程不依赖 CC Connect 或微信 Bot，CC Connect 命令接入与批次通知均为可选功能。
 
-## 能做什么
+## 核心功能
 
 - 以一条作品识别作者，收集其公开视频与图文，按作品 ID 查重；每批最多十条，每条完成立即保存。
 - 从真实音轨做本地 Whisper 转写；图文下载完整图片并用 macOS Vision OCR，Agent 再逐页看图。
@@ -15,15 +15,23 @@
 
 普通作品链接不会授权全作者导入。只有当前消息显式使用 `/dy-author` 或 `$dy-author` 才启动本技能。
 
-## 支持环境与前提
+## 宿主与运行依赖
 
 完整媒体路线面向 **macOS Apple Silicon（M 系列）+ Python 3.12**。本地 ASR 使用 MLX，图文 OCR 使用 Swift/Vision；Windows、Linux、Intel Mac 的完整流程目前不承诺支持。需要 Apple Command Line Tools（含 Swift），以及可用的 Google Chrome profile。首次转写会从 Hugging Face 下载模型，需要网络和本地磁盘空间。FFmpeg 可来自系统，或依赖中的 `imageio-ffmpeg`。
 
-先安装并运行自己的 [cc-connect](https://github.com/chenhg5/cc-connect)，配置好 Agent、模型账号、消息平台和项目的实际 `work_dir`。不同 Agent 适配器对技能/斜杠命令的支持有差异；本包提供 `.claude` 布局的命令集成，其他适配器需按其实际技能发现机制安装。
+宿主 Agent 需要读取 Skill、读写本地文件、执行脚本，并能查看图文原图。只运行 Python 不会自动生成知识笔记；模型账号与服务由用户自行配置。
+
+### 宿主接入范围
+
+可独立配置 Skill，也可选用 [CC Connect](https://github.com/chenhg5/cc-connect) 接入聊天平台。配置器的命令集成采用 .claude 布局；Codex 等其他宿主需按其技能发现机制加载本仓库，文档中的 `$dy-author` 是显式技能入口。不同宿主的命令与工具权限不同，不承诺下载后在任意 Agent 中即用。
+
+仅在需要聊天平台接入时，配置 CC Connect、Agent、模型账号、消息平台及实际 `work_dir`。微信 Bot 不是核心运行前提。
 
 没有 Chrome 访问也可用 `--no-browser` 配置，但匿名请求可能拿不到完整作品；不会承诺绕过登录、验证码、私密或删除限制。首次使用建议选一个小作者，并先备份 Vault。
 
-## 1. 下载并安装依赖
+## 下载和安装
+
+### 安装依赖
 
 ```sh
 git clone https://github.com/llm-xiaoye/cc-connect-dy-author.git
@@ -38,9 +46,15 @@ cd cc-connect-dy-author
 
 `requirements.lock.txt` 保留原功能所用版本，包含固定 commit 与摘要的 F2 源码依赖；需要访问 PyPI/GitHub。它是版本固定清单，**不是全包 wheel hash 锁**，不要加 `--require-hashes`。依赖安装失败时保留错误，不把它当成作品或技能处理失败；不建议任意升级 F2、yt-dlp 或 MLX 后仍假定行为不变。
 
-## 2. 生成你自己的配置与 cc-connect 命令
+### 生成配置
 
-在仓库根执行，替换下面两个路径。`--cc-workspace` 是 cc-connect 项目的 **work_dir**，不是程序安装目录或 `.claude` 目录。
+独立使用时，在仓库根执行以下命令，再按宿主的技能发现机制加载仓库：
+
+```sh
+./.venv/bin/python scripts/configure.py --vault "/absolute/path/to/your/ObsidianVault"
+```
+
+需要 CC Connect 命令集成时，改用下面的命令。两种配置方式选择一种，不要对已有配置重复执行。`--cc-workspace` 是 CC Connect 项目的实际工作目录，不是程序安装目录或 .claude 目录。
 
 ```sh
 ./.venv/bin/python scripts/configure.py \
@@ -52,7 +66,7 @@ cd cc-connect-dy-author
 
 1. 验证 Vault 与显式提供的路径，不新建 Chrome 资料。
 2. 生成权限为 `0600`、被 Git 忽略的 `config.json`，记录当前虚拟环境入口；默认 `browser_profile=null` 自动识别、`auto_browser_recovery=false`。获取作者清单及下载作品默认不弹出页面。
-3. 在 work_dir 创建 `.claude/skills/dy-author` 链接与 `.claude/commands/dy-author.md`。
+3. 指定 --cc-workspace 时，在 work_dir 创建 `.claude/skills/dy-author` 链接与 `.claude/commands/dy-author.md`。
 
 已有配置、同名技能或命令时拒绝覆盖。更新时保留个人配置、虚拟环境与缓存。旧安装升级后，请将当前 `config.json` 的 `auto_browser_recovery` 设为 `false`；这一关闭设置也约束旧批次。其他运行参数仍使用创建时的快照，不删除旧批次或已保存笔记。
 
@@ -60,7 +74,7 @@ cd cc-connect-dy-author
 
 只安装 Skill、不创建 cc-connect 命令时省略 `--cc-workspace`。无浏览器模式用 `--no-browser` 代替 Chrome 参数。手动配置可参考 [config.example.json](config.example.json)，实际配置必须保存为本仓库的 `config.json`，所有路径换成你自己的绝对路径。字段说明见 [docs/configuration.md](docs/configuration.md)。
 
-## 3. 可选：每批进度主动提示
+### 可选的批次通知
 
 若需要在长任务中主动收到每批十条的提示，在**首次配置**时再加：
 
@@ -73,13 +87,17 @@ cd cc-connect-dy-author
 
 运行时由 cc-connect 提供当前 `CC_PROJECT` 和 `CC_SESSION_KEY`，技能不会猜测其他活跃会话。不要把示例或别人的会话 ID 写死到环境。没有会话绑定时由正常 Agent 回复展示进度；没有主动提示不影响笔记保存。
 
-## 4. 检查安装并开始用
+### 检查安装
 
 ```sh
 ./.venv/bin/python -B scripts/doctor.py
 ```
 
-此检查只检查本地路径、平台和依赖模块发现，不联网、不下载模型、不写 Vault，也不证明抖音接口可用。完成后让 cc-connect/Agent 刷新技能发现或开启新会话。在连接的聊天中发送：
+此检查只检查本地路径、平台和依赖模块发现，不联网、不下载模型、不写 Vault，也不证明抖音接口可用。完成后让 Agent 刷新技能发现或开启新会话；使用 CC Connect 时刷新对应会话。
+
+## 使用方式
+
+在已加载技能的会话中发送：
 
 ```text
 /dy-author https://www.douyin.com/video/作品ID
@@ -92,6 +110,8 @@ cd cc-connect-dy-author
 ```
 
 期望流程是：识别作者 → 翻页列作品 → 查重 → 每批准备材料 → 当前 Agent 写笔记/题目 → 逐条提交 → 继续下一批 → 最终汇报。**不要把 `scripts/dy_author.py` 的一次运行误当作整套 AI 写作**；它是供 Agent 驱动的队列接口。细节见 [references/workflow.md](references/workflow.md)。
+
+## 配置与输出
 
 输出通常位于你的 Vault：
 
@@ -106,7 +126,7 @@ cd cc-connect-dy-author
 
 运行材料、转写、草稿和状态位于本地 `.cache/runs/<run_id>/` 等目录。它们可能包含个人学习记录及源作品内容，不能上传。中断后优先保留同一 run_dir 与检查点；新发同一显式命令会建立新批次，并排除已有/已跳过作品。
 
-## 限制与常见问题
+## 常见问题
 
 - **接口 403/429、翻页中断**：会记录清单不完整；已获取作品可继续入库，不能称“全部”。不反复刷新，不编造签名。
 - **抖音长文字文章（type 163）**：目前只列清单、标记暂不支持，不拿背景音乐冒充正文。视频和图文保留原支持范围。
@@ -117,12 +137,19 @@ cd cc-connect-dy-author
 
 只有清单完整、全部处理、无失败且无暂不支持时，才能称作者“全部作品已入库”。这里只处理账号可访问的公开内容；请遵守平台条款和内容权利。
 
-## 隐私、开发与许可证
+## 限制与隐私
 
 发布包只含技能、源代码、规则、测试和通用示例；个人配置与缓存被排除。数据流、反馈脱敏和权限边界见 [PRIVACY.md](PRIVACY.md)。模型服务仍可能接收到当前 Agent 为写作读取的转写、图片和所需目录/笔记摘录；本地 ASR/OCR 不等于整套流程完全离线。
+
+## 开发与验证
 
 ```sh
 ./.venv/bin/python -B -m unittest discover -s tests
 ```
 
-这些是本地回归，使用临时 Vault 与受控材料，不发真实抖音请求或主动聊天通知；它们不能保证未来平台接口一直可用。设计和保留的行为边界见 [docs/design.md](docs/design.md)。代码采用 [MIT License](LICENSE)；第三方依赖按各自许可证使用，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+这些是本地回归，使用临时 Vault 与受控材料，不发真实抖音请求或主动聊天通知；它们不能保证未来平台接口一直可用。设计和保留的行为边界见 [docs/design.md](docs/design.md)。
+
+## 许可证
+
+采用 [MIT 许可证](LICENSE)；第三方依赖按各自许可证使用，见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+
