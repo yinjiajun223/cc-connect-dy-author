@@ -22,12 +22,20 @@ MAX_FILE = 8 * 1024 * 1024
 MAX_BODY = 8 * 1024 * 1024
 MAX_KEY = 16384
 MAX_AGE = 12 * 3600
+# Filesystem timestamps can sit slightly ahead of the wall clock (seen on Windows),
+# so only clearly future entries are treated as anomalous.
+MAX_CLOCK_SKEW = 60
 _index = {}
 
 
 def default_cache(browser):
-    if browser == "chrome" and sys.platform == "darwin":
-        return Path.home() / "Library/Caches/Google/Chrome/Default/Cache/Cache_Data"
+    if browser == "chrome":
+        if sys.platform == "darwin":
+            return Path.home() / "Library/Caches/Google/Chrome/Default/Cache/Cache_Data"
+        if sys.platform == "win32":
+            local = os.environ.get("LOCALAPPDATA")
+            if local:
+                return Path(local) / "Google/Chrome/User Data/Default/Cache/Cache_Data"
     return None
 
 
@@ -170,7 +178,7 @@ def candidates(root, deadline=None, diagnostics=None):
                 stat = entry.stat(follow_symlinks=False)
             except OSError:
                 continue
-            if 72 <= stat.st_size <= MAX_FILE and 0 <= now - stat.st_mtime <= MAX_AGE:
+            if 72 <= stat.st_size <= MAX_FILE and -MAX_CLOCK_SKEW <= now - stat.st_mtime <= MAX_AGE:
                 found.append((stat.st_mtime, entry.path))
     found.sort(reverse=True)
     result = [path for _, path in found[:12000]]

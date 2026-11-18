@@ -31,7 +31,7 @@ class AuthorDocTests(unittest.TestCase):
                               extra_front=f"douyin_author_id: {AUTHOR}\n")
         result = self.stage(nickname="甲", listing=self.listing(A, B, C), skipped={B: "纯配乐"})
         doc = Path(result["author_doc"])
-        text = doc.read_text()
+        text = doc.read_text(encoding="utf-8")
         self.assertEqual(doc.name, "甲.md")
         self.assertIn("共 4：已入库 2，待导入 1，跳过 1，失败 0", text)
         self.assertIn(f"[{C}](https://www.douyin.com/note/{C}) | 图文 | 待导入", text)
@@ -43,15 +43,15 @@ class AuthorDocTests(unittest.TestCase):
 
     def test_outside_content_preserved_and_broken_markers_refused(self):
         doc = Path(self.stage(nickname="甲", listing=self.listing(A))["author_doc"])
-        doc.write_text(doc.read_text().replace(docs.START, "我的备注。\n\n" + docs.START) + "\n末尾备注。\n")
+        doc.write_text(doc.read_text(encoding="utf-8").replace(docs.START, "我的备注。\n\n" + docs.START) + "\n末尾备注。\n", encoding="utf-8")
         self.stage(nickname="甲改名", failed={A: "下载失败"})
-        text = doc.read_text()
+        text = doc.read_text(encoding="utf-8")
         self.assertIn("我的备注。", text)
         self.assertTrue(text.endswith("末尾备注。\n"))
         self.assertIn("| 失败 | 下载失败 |", text)
         self.assertEqual(library.read_note(doc)[0]["douyin_author"], "甲改名")
         self.assertEqual(doc.name, "甲.md")
-        doc.write_text(doc.read_text().replace(docs.END, ""))
+        doc.write_text(doc.read_text(encoding="utf-8").replace(docs.END, ""), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "管理区域"):
             self.stage(nickname="甲")
 
@@ -70,7 +70,7 @@ class AuthorDocTests(unittest.TestCase):
 
     def test_unknown_listing_is_labelled_unchecked(self):
         doc = Path(self.stage(nickname="甲")["author_doc"])
-        self.assertIn("清单未核对", doc.read_text())
+        self.assertIn("清单未核对", doc.read_text(encoding="utf-8"))
         self.assertEqual(library.read_note(doc)[0]["listing_status"], "未核对")
 
     def test_unknown_author_page(self):
@@ -88,7 +88,8 @@ class AuthorDocTests(unittest.TestCase):
         old_front, old_body = library.read_note_text(raw.decode())
         self.assertEqual(body, old_body)
         self.assertEqual(front, dict(old_front, douyin_author='作者: "引号" #1', douyin_author_id=AUTHOR))
-        self.assertTrue(new.endswith(raw[raw.index(b"\n---\n", 3):]))
+        newline = b"\r\n" if b"---\r\n" in raw else b"\n"
+        self.assertTrue(new.endswith(raw[raw.index(newline + b"---" + newline, 3):]))
         self.assertEqual(list(front)[:5], ["source_url", "title", "aweme_id", "douyin_author", "douyin_author_id"])
         with self.assertRaises(ValueError):
             docs.insert_author_keys(new, "x", AUTHOR)

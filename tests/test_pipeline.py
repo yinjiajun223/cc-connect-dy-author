@@ -3,6 +3,7 @@ from pathlib import Path
 
 import helpers
 from helpers import AUTHOR, OTHER_AUTHOR, analysis, skeleton
+import asr
 import library
 import pipeline
 
@@ -139,15 +140,15 @@ class LocalAsrModelTests(unittest.TestCase):
     def test_existing_directory_is_used_directly(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(pipeline.local_asr_model(tmp), tmp)
+            self.assertEqual(asr.local_asr_model(tmp), tmp)
 
     def test_cached_snapshot_is_preferred_without_network(self):
         from unittest import mock
         with mock.patch("huggingface_hub.snapshot_download", return_value="/cache/snap") as fake:
-            self.assertEqual(pipeline.local_asr_model("org/model"), "/cache/snap")
+            self.assertEqual(asr.local_asr_model("org/model"), "/cache/snap")
         fake.assert_called_once_with(repo_id="org/model", local_files_only=True)
 
     def test_missing_snapshot_falls_back_to_repo_id(self):
         from unittest import mock
         with mock.patch("huggingface_hub.snapshot_download", side_effect=OSError("not cached")):
-            self.assertEqual(pipeline.local_asr_model("org/model"), "org/model")
+            self.assertEqual(asr.local_asr_model("org/model"), "org/model")

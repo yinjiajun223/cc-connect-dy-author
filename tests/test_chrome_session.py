@@ -8,7 +8,6 @@ from pathlib import Path
 import sys
 import tempfile
 import time
-from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -47,15 +46,37 @@ class ChromeSessionTests(unittest.TestCase):
 
     def test_os_home_is_used_when_zcode_replaces_home(self):
         profile = self.profile("Profile 2")
-        (self.root / "Local State").write_text(json.dumps({"profile": {"last_used": "Profile 2"}}))
+        (self.root / "Local State").write_text(json.dumps({"profile": {"last_used": "Profile 2"}}), encoding="utf-8")
         with patch.dict(os.environ, {"HOME": str(self.home / "zcode-home")}), \
-             patch("pwd.getpwuid", return_value=SimpleNamespace(pw_dir=str(self.home))):
+             patch.object(chrome_session, "user_home", return_value=self.home):
             self.assertEqual(chrome_session.profile_candidates(), [profile])
+
+    def test_windows_user_home_uses_userprofile(self):
+        with patch.object(chrome_session.sys, "platform", "win32"), \
+             patch.dict(os.environ, {"USERPROFILE": str(self.home)}):
+            self.assertEqual(chrome_session.user_home(), self.home)
+
+    def test_windows_profiles_and_cache_come_from_local_app_data(self):
+        local = self.home / "LocalAppData"
+        root = local / "Google/Chrome/User Data"
+        profile = root / "Profile 1"
+        profile.mkdir(parents=True)
+        (root / "Local State").write_text(json.dumps({"profile": {"last_used": "Profile 1"}}), encoding="utf-8")
+        with patch.object(chrome_session.sys, "platform", "win32"), \
+             patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+            self.assertEqual(chrome_session.profile_candidates(home=self.home), [profile.resolve()])
+            self.assertEqual(chrome_session.cache_path(profile, {}, home=self.home),
+                             str((profile / "Cache/Cache_Data").resolve()))
+            config, status = chrome_session.resolve_config(
+                {"browser": "chrome"}, cookie_reader=lambda *args: cookies(), home=self.home)
+        self.assertEqual(status["status"], "available")
+        self.assertEqual(config["browser_profile"], str(profile.resolve()))
+        self.assertEqual(config["browser_cache_dir"], str((profile / "Cache/Cache_Data").resolve()))
 
     def test_auto_selection_reuses_session_and_matching_cache_without_windows(self):
         first, logged_in = self.profile("Default"), self.profile("Profile 1")
         (self.root / "Local State").write_text(json.dumps({"profile": {
-            "last_used": "Default", "info_cache": {"Default": {}, "Profile 1": {}}}}))
+            "last_used": "Default", "info_cache": {"Default": {}, "Profile 1": {}}}}), encoding="utf-8")
         reader = Mock(side_effect=lambda browser, profile: cookies() if profile == str(logged_in) else CookieJar())
         with patch.object(pipeline.douyin_access.subprocess, "Popen") as popen:
             config, status = chrome_session.resolve_config({"browser": "chrome"}, cookie_reader=reader, home=self.home)
@@ -83,6 +104,30 @@ class ChromeSessionTests(unittest.TestCase):
             cookie_reader=Mock(side_effect=RuntimeError("PRIVATE_SESSION_VALUE")))
         self.assertEqual(status["status"], "read_error")
         self.assertIn("未据此判定", status["message"])
+        self.assertNotIn("PRIVATE_SESSION_VALUE", json.dumps(status))
+
+    def test_windows_cookie_database_copy_failure_suggests_exiting_chrome(self):
+        profile = self.profile("Default")
+        error = RuntimeError("Could not copy Chrome cookie database. PRIVATE_SESSION_VALUE")
+        with patch.object(chrome_session.sys, "platform", "win32"):
+            _, status = chrome_session.resolve_config(
+                {"browser": "chrome", "browser_profile": str(profile)}, home=self.home,
+                cookie_reader=Mock(side_effect=error))
+        self.assertEqual(status["status"], "read_error")
+        self.assertEqual(status["error_reason"], "cookie_database_inaccessible")
+        self.assertIn("完全退出 Chrome", status["message"])
+        self.assertNotIn("PRIVATE_SESSION_VALUE", json.dumps(status))
+
+    def test_windows_dpapi_error_suggests_a_dedicated_profile(self):
+        profile = self.profile("Default")
+        error = RuntimeError("Failed to decrypt with DPAPI. PRIVATE_SESSION_VALUE")
+        with patch.object(chrome_session.sys, "platform", "win32"):
+            _, status = chrome_session.resolve_config(
+                {"browser": "chrome", "browser_profile": str(profile)}, home=self.home,
+                cookie_reader=Mock(side_effect=error))
+        self.assertEqual(status["status"], "read_error")
+        self.assertEqual(status["error_reason"], "cookie_decryption_failed")
+        self.assertIn("独立", status["message"])
         self.assertNotIn("PRIVATE_SESSION_VALUE", json.dumps(status))
 
     def test_missing_profile_never_reads_cookies_or_opens_chrome(self):
@@ -120,7 +165,7 @@ class ChromeSessionTests(unittest.TestCase):
                   "browser": None, "auto_browser_recovery": True}
         created = dy_author.initialize(config)
         run = Path(created["run_dir"])
-        (run / "input.txt").write_text("/dy-author https://www.douyin.com/video/7676060613507943716")
+        (run / "input.txt").write_text("/dy-author https://www.douyin.com/video/7676060613507943716", encoding="utf-8")
         state = pipeline.load_json(run / "state.json")
         state["items"] = [{"id": "7676060613507943716", "status": "saved", "note": "existing.md"}]
         dy_author.write_state(run, state)

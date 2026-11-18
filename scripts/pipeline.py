@@ -16,10 +16,12 @@ import tempfile
 import unicodedata
 import wave
 
+import console
 import library
 import image_posts
 import douyin_access
 import browser_cache
+import asr
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
@@ -270,48 +272,33 @@ def validate_transcript(raw):
     return {"text": text, "segments": segments, "language": raw.get("language", "zh")}
 
 
-def local_asr_model(model):
-    """Prefer an already-downloaded Hugging Face snapshot so ASR works offline.
-
-    mlx_whisper otherwise calls snapshot_download online on every run, which fails
-    (e.g. SSLError / timeout) whenever huggingface.co is unreachable even though the
-    model is cached. Falls back to the repo id so a first-time download still works.
-    """
-    if Path(model).expanduser().exists():
-        return str(Path(model).expanduser())
-    try:
-        from huggingface_hub import snapshot_download
-        return snapshot_download(repo_id=model, local_files_only=True)
-    except Exception:
-        return model
-
-
 def transcribe(args, config):
     bundle_path = Path(args.bundle).expanduser().resolve()
     bundle = load_json(bundle_path)
     if bundle.get("media_kind") == "image":
-        print(json.dumps(image_posts.extract(bundle_path), ensure_ascii=False))
+        print(json.dumps(image_posts.extract(bundle_path, config), ensure_ascii=False))
         return
     audio = bundle_path.parent / "audio.wav"
     digest = hashlib.sha256(audio.read_bytes()).hexdigest()
-    model = args.model or config["asr_model"]
+    backend = asr.backend(config)
+    model = args.model or config.get("asr_model") or asr.DEFAULT_MODELS[backend]
     output = bundle_path.parent / "transcript.json"
     if output.exists():
         old = load_json(output)
-        if old.get("audio_sha256") == digest and old.get("asr_model") == model:
+        if (old.get("audio_sha256") == digest and old.get("asr_model") == model
+                and old.get("asr_backend", asr.MLX) == backend):
             validate_transcript(old)
             print(json.dumps({"status": "cached", "transcript": str(output)}, ensure_ascii=False))
             return
-    import mlx_whisper
     import numpy as np
     with wave.open(str(audio), "rb") as stream:
         if (stream.getframerate(), stream.getnchannels(), stream.getsampwidth()) != (16000, 1, 2):
             raise ValueError("请先 prepare，转为 16kHz 单声道 PCM。")
         samples = np.frombuffer(stream.readframes(stream.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
-    raw = mlx_whisper.transcribe(samples, path_or_hf_repo=local_asr_model(model), language="zh",
-                                 task="transcribe", verbose=False, condition_on_previous_text=False)
+    raw = asr.transcribe(samples, asr.model_name(model, backend), backend,
+                         config.get("asr_device") or "cpu")
     result = validate_transcript(raw)
-    result.update({"aweme_id": video_id(bundle["aweme_id"]), "asr_model": model,
+    result.update({"aweme_id": video_id(bundle["aweme_id"]), "asr_model": model, "asr_backend": backend,
                    "audio_sha256": digest, "transcribed_at": datetime.now(timezone.utc).isoformat()})
     write_json(output, result)
     print(json.dumps({"status": "transcribed", "transcript": str(output),
@@ -478,6 +465,7 @@ def validate_note_skeleton(body, title, analysis_data=None):
 
 
 def main():
+    console.force_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     commands = parser.add_subparsers(dest="command", required=True)

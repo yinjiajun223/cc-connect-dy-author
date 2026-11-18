@@ -14,7 +14,7 @@ class BatchNoticeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name).resolve()
         self.binary, self.data = root / "cc-connect", root / "data"
-        self.binary.write_text("not executable; subprocess is mocked")
+        self.binary.write_text("not executable; subprocess is mocked", encoding="utf-8")
         self.data.mkdir()
         self.stack = []
         for name, value in (("CC_BINARY", self.binary), ("CC_DATA_DIR", self.data)):
@@ -36,6 +36,7 @@ class BatchNoticeTests(unittest.TestCase):
             self.assertEqual(argv, [str(self.binary), "send", "--project", "current", "--session",
                                     "wechat:current", "--data-dir", str(self.data), "--stdin"])
             self.assertEqual(send.call_args.kwargs["input"], self.report["message"] + "\n")
+            self.assertEqual(send.call_args.kwargs["encoding"], "utf-8")
             self.assertEqual(self.snapshots[0]["batch_notice"]["status"], "attempting")
             self.assertEqual(batch_notice.notify(self.state, self.report, self.persist)["status"], "already_attempted")
             send.assert_called_once()

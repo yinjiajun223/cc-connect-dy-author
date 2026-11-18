@@ -29,7 +29,7 @@ def notify(state, report, persist, *, config=None):
     message = report["message"]
     binding = json.dumps([state.get("last_batch_ids", []), message, project, session],
                          ensure_ascii=False, separators=(",", ":"))
-    key = hashlib.sha256(binding.encode()).hexdigest()
+    key = hashlib.sha256(binding.encode("utf-8")).hexdigest()
     previous = state.get("batch_notice") or {}
     if previous.get("key") == key:
         return {"status": "already_attempted", "previous_status": previous.get("status")}
@@ -39,8 +39,10 @@ def notify(state, report, persist, *, config=None):
     state["batch_notice"] = {"key": key, "status": "attempting"}
     persist()
     try:
-        result = subprocess.run(argv, input=message + "\n", text=True, capture_output=True,
-                                timeout=30, check=False)
+        # cc-connect reads UTF-8; text=True alone would encode the Chinese message
+        # with the Windows locale code page and corrupt the notice.
+        result = subprocess.run(argv, input=message + "\n", text=True, encoding="utf-8",
+                                capture_output=True, timeout=30, check=False)
         outcome = {"status": "sent"} if result.returncode == 0 else {
             "status": "failed", "reason": f"批次提示发送失败（退出码 {result.returncode}）；已保存作品不受影响。"}
     except subprocess.TimeoutExpired:

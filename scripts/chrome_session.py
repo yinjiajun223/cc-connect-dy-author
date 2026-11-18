@@ -15,7 +15,7 @@ AUTH_COOKIES = {"sessionid", "sessionid_ss", "sid_guard", "sid_tt"}
 def user_home():
     # ZCode may replace HOME with its application sandbox. Chrome uses the OS user.
     if sys.platform == "win32":
-        return Path(os.environ["USERPROFILE"]).resolve()
+        return Path(os.environ.get("USERPROFILE") or Path.home()).resolve()
     import pwd
     return Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
 
@@ -26,6 +26,7 @@ def chrome_roots(home=None):
         return (home / "Library/Application Support/Google/Chrome",
                 home / "Library/Caches/Google/Chrome")
     if sys.platform == "win32":
+        # Chrome keeps profiles and the HTTP cache under LOCALAPPDATA on Windows.
         root = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local")) / "Google/Chrome/User Data"
         return root, root
     root = home / ".config/google-chrome"
@@ -105,10 +106,17 @@ def resolve_config(config, *, cookie_reader=None, home=None):
                 break
         except Exception as exc:
             # Reader errors can contain credentials; never include their text.
-            observations.append((profile, "read_error", type(exc).__name__))
+            error = {"error_type": type(exc).__name__}
+            if sys.platform == "win32":
+                message = str(exc).lower()
+                if "could not copy chrome cookie database" in message:
+                    error["error_reason"] = "cookie_database_inaccessible"
+                elif "failed to decrypt with dpapi" in message:
+                    error["error_reason"] = "cookie_decryption_failed"
+            observations.append((profile, "read_error", error))
     selected = next((item for item in observations if item[1] == "available"), None)
     selected = selected or next((item for item in observations if item[1] == "login_required"), observations[0])
-    profile, status, error_type = selected
+    profile, status, error = selected
     cache_config = dict(config, browser_profile=None) if automatic else config
     effective.update(browser_profile=str(profile), browser_cache_dir=cache_path(profile, cache_config, home=home))
     messages = {
@@ -118,8 +126,19 @@ def resolve_config(config, *, cookie_reader=None, home=None):
     }
     result = {"status": status, "profile": str(profile), "session_present": status == "available",
               "server_validated": False, "message": messages[status]}
-    if error_type:
-        result["error_type"] = error_type
+    if error:
+        result.update(error)
+        if error.get("error_reason") == "cookie_database_inaccessible":
+            result["message"] = (
+                "无法读取 Chrome Cookie 数据库，可能被 Chrome 占用或当前用户没有读取权限。"
+                "请在对应资料中确认抖音已登录，保存工作后完全退出 Chrome（包括后台进程），再重试。"
+                "若仍失败，请检查 Chrome 资料路径和读取权限。"
+            )
+        elif error.get("error_reason") == "cookie_decryption_failed":
+            result["message"] = (
+                "Windows 无法解密当前 Chrome 资料中的 Cookie。"
+                "请按配置文档创建独立的 Chrome 用户资料，在其中登录抖音并完全退出，再重试。"
+            )
     return effective, result
 
 

@@ -6,8 +6,10 @@ from html.parser import HTMLParser
 from http.cookiejar import CookieJar
 import json
 import logging
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -21,6 +23,12 @@ from image_posts import StageError, USER_AGENT
 MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
 PAGE_LIMIT = 4 * 1024 * 1024
 MEDIA_LIMIT = 512 * 1024 * 1024
+OSX_APPLICATIONS = {"chrome": "com.google.Chrome", "edge": "com.microsoft.edgemac",
+                    "safari": "com.apple.Safari", "firefox": "org.mozilla.firefox"}
+WINDOWS_EXECUTABLES = {"chrome": "chrome.exe", "edge": "msedge.exe", "firefox": "firefox.exe"}
+WINDOWS_INSTALL_PATHS = {"chrome": "Google/Chrome/Application/chrome.exe",
+                         "edge": "Microsoft/Edge/Application/msedge.exe",
+                         "firefox": "Mozilla Firefox/firefox.exe"}
 
 
 def cookie_source(browser, profile=None):
@@ -39,13 +47,44 @@ def cookie_source(browser, profile=None):
     return (browser, str(path.resolve()))
 
 
+def browser_recovery_available(browser="chrome"):
+    """Whether this host can open the work in an already configured browser."""
+    if sys.platform == "darwin":
+        return browser in OSX_APPLICATIONS
+    if sys.platform == "win32":
+        return browser in WINDOWS_EXECUTABLES
+    return False
+
+
+def windows_browser_executable(browser):
+    """Locate a Windows browser executable without requiring a shell PATH."""
+    name = WINDOWS_EXECUTABLES.get(browser)
+    if sys.platform != "win32" or not name:
+        return None
+    import winreg
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" + name) as key:
+                value, _ = winreg.QueryValueEx(key, None)
+        except OSError:
+            continue
+        if isinstance(value, str) and Path(value).is_file():
+            return Path(value)
+    for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
+                 os.environ.get("LOCALAPPDATA")):
+        if root:
+            path = Path(root) / WINDOWS_INSTALL_PATHS[browser]
+            if path.is_file():
+                return path
+    found = shutil.which(name)
+    return Path(found) if found else None
+
+
 def refresh_browser_session(vid, browser, wait_seconds=8, *, source_url=None, profile=None):
     """Open the exact work in the existing browser; never claim page inspection."""
     if not re.fullmatch(r"[0-9]{16,22}", str(vid)):
         raise StageError("browser_recovery", "作品 ID 格式错误。", "INVALID_ID")
-    applications = {"chrome": "com.google.Chrome", "edge": "com.microsoft.edgemac",
-                    "safari": "com.apple.Safari", "firefox": "org.mozilla.firefox"}
-    if sys.platform != "darwin" or browser not in applications:
+    if not browser_recovery_available(browser):
         raise StageError("browser_recovery", "当前宿主不能自动打开配置浏览器。", "BROWSER_UNAVAILABLE")
     if not isinstance(wait_seconds, (int, float)) or not 0 <= wait_seconds <= 20:
         raise StageError("browser_recovery", "浏览器等待时间须为 0–20 秒。", "INVALID_WAIT")
@@ -61,9 +100,22 @@ def refresh_browser_session(vid, browser, wait_seconds=8, *, source_url=None, pr
         if browser != "chrome":
             raise StageError("browser_profile", "自动打开指定用户资料目前仅支持 Chrome。", "PROFILE_UNSUPPORTED")
         profile_path = Path(cookie_source(browser, profile)[1])
+    executable = windows_browser_executable(browser)
+    if sys.platform == "win32" and executable is None:
+        raise StageError("browser_recovery", f"找不到已安装的 {browser}，无法自动打开作品页；请手动打开作品。",
+                         "BROWSER_UNAVAILABLE")
     process = None
     try:
-        if profile_path is not None:
+        if sys.platform == "win32":
+            command = [str(executable)]
+            if profile_path is not None:
+                # Chrome's process singleton hands the URL to the selected existing profile.
+                command += ["--user-data-dir=" + str(profile_path.parent),
+                            "--profile-directory=" + profile_path.name]
+            process = subprocess.Popen([*command, url], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
+        elif profile_path is not None:
             # Call the binary so flags reach Chrome even when it is already running.
             # Chrome's process singleton hands the URL to the selected existing profile.
             process = subprocess.Popen([
@@ -73,7 +125,7 @@ def refresh_browser_session(vid, browser, wait_seconds=8, *, source_url=None, pr
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, start_new_session=True)
         else:
-            subprocess.run(["/usr/bin/open", "-g", "-b", applications[browser], url],
+            subprocess.run(["/usr/bin/open", "-g", "-b", OSX_APPLICATIONS[browser], url],
                            check=True, capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as exc:
         raise StageError("browser_recovery", "自动打开浏览器失败：" + type(exc).__name__,

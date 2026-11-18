@@ -49,7 +49,7 @@ class AccessTests(unittest.TestCase):
     def report(self):
         reports = list((self.cache / "recovery").glob("*.json"))
         self.assertEqual(len(reports), 1)
-        return json.loads(reports[0].read_text())
+        return json.loads(reports[0].read_text(encoding="utf-8"))
 
     def test_browser_recovery_uses_launchservices_and_exact_work_without_shell(self):
         with patch.object(access.sys, 'platform', 'darwin'), \
@@ -98,6 +98,44 @@ class AccessTests(unittest.TestCase):
              patch.object(access, 'api_detail', new=AsyncMock(return_value=VIDEO)):
             asyncio.run(access.recover_detail(VID, 'chrome', self.cache, profile=str(self.cache)))
         cookies.assert_called_once_with('chrome', str(self.cache))
+
+    def test_windows_recovery_launches_the_installed_browser(self):
+        executable = self.cache / 'chrome.exe'
+        executable.write_bytes(b'')
+        with patch.object(access.sys, 'platform', 'win32'), \
+             patch.object(access, 'windows_browser_executable', return_value=executable), \
+             patch.object(access.subprocess, 'Popen') as launched, \
+             patch.object(access.time, 'sleep') as waited:
+            launched.return_value.poll.return_value = 0
+            result = access.refresh_browser_session(VID, 'chrome', 0)
+        self.assertEqual(launched.call_args.args[0],
+                         [str(executable), f'https://www.douyin.com/video/{VID}'])
+        waited.assert_called_once_with(0)
+        self.assertEqual(result['page_state'], 'not_observed')
+
+    def test_windows_profile_launch_pins_user_data_dir(self):
+        profile = (self.cache / 'User Data' / 'Profile 2')
+        profile.mkdir(parents=True)
+        executable = self.cache / 'chrome.exe'
+        executable.write_bytes(b'')
+        with patch.object(access.sys, 'platform', 'win32'), \
+             patch.object(access, 'windows_browser_executable', return_value=executable), \
+             patch.object(access.subprocess, 'Popen') as launched, \
+             patch.object(access.time, 'sleep'):
+            launched.return_value.poll.return_value = 0
+            access.refresh_browser_session(VID, 'chrome', 0, profile=str(profile.resolve()))
+        argv = launched.call_args.args[0]
+        self.assertEqual(argv, [str(executable), '--user-data-dir=' + str(profile.resolve().parent),
+                                '--profile-directory=Profile 2', f'https://www.douyin.com/video/{VID}'])
+
+    def test_windows_missing_browser_is_reported_without_launching(self):
+        with patch.object(access.sys, 'platform', 'win32'), \
+             patch.object(access, 'windows_browser_executable', return_value=None), \
+             patch.object(access.subprocess, 'Popen') as launched:
+            with self.assertRaises(image_posts.StageError) as error:
+                access.refresh_browser_session(VID, 'chrome', 0)
+        self.assertEqual(error.exception.code, 'BROWSER_UNAVAILABLE')
+        launched.assert_not_called()
 
     def test_invalid_browser_recovery_never_launches_a_command(self):
         with patch.object(access.subprocess, 'run') as launched:
@@ -216,7 +254,7 @@ class AccessTests(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()):
             downloader.return_value.__enter__.return_value.extract_info.side_effect = RuntimeError("Fresh cookies needed")
             pipeline.prepare(args, config)
-        bundle = json.loads((self.cache / VID / "bundle.json").read_text())
+        bundle = json.loads((self.cache / VID / "bundle.json").read_text(encoding="utf-8"))
         self.assertEqual(bundle["aweme_id"], VID)
         self.assertEqual(bundle["title"], VIDEO["desc"])
         self.assertEqual(bundle["duration_seconds"], 145)
@@ -417,6 +455,12 @@ class TabTests(unittest.TestCase):
         with patch.object(access.sys, 'platform', 'linux'), self.ran('1') as run:
             self.assertIsNone(access.douyin_tab_ids(VID))
             self.assertIsNone(access.close_new_tabs(VID, []))
+            run.assert_not_called()
+
+    def test_windows_has_no_tab_automation(self):
+        with patch.object(access.sys, 'platform', 'win32'), self.ran('1') as run:
+            self.assertIsNone(access.douyin_tab_ids(VID))
+            self.assertIsNone(access.close_new_tabs(VID, ['1']))
             run.assert_not_called()
 
 

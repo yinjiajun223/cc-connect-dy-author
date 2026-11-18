@@ -72,18 +72,18 @@ class ContextResumeTests(unittest.TestCase):
         target = run / "items" / vid
         target.mkdir(parents=True)
         material, draft, analysis = target / "material.txt", target / "knowledge.md", target / "analysis.json"
-        material.write_text("完整原始材料")
-        draft.write_text("未提交草稿")
-        analysis.write_text("{}")
-        (target / "catalog.json").write_text(json.dumps({"notes": ["历史大目录"] * 1000}))
-        (target / "catalog-terms.txt").write_text("记忆\n")
+        material.write_text("完整原始材料", encoding="utf-8")
+        draft.write_text("未提交草稿", encoding="utf-8")
+        analysis.write_text("{}", encoding="utf-8")
+        (target / "catalog.json").write_text(json.dumps({"notes": ["历史大目录"] * 1000}), encoding="utf-8")
+        (target / "catalog-terms.txt").write_text("记忆\n", encoding="utf-8")
         state["items"] = [{"id": vid, "url": f"https://www.douyin.com/video/{vid}", "status": "ready",
                            "interview": False, "artifacts": {"item_dir": str(target), "material_file": str(material),
                            "knowledge_file": str(draft), "analysis_file": str(analysis)}}]
         result = dy_author.catalog_search(run, state, frozen, vid)
         self.assertEqual(result["knowledge"]["total_matches"], 1)
-        self.assertNotIn("notes", json.loads((target / "catalog.json").read_text()))
-        self.assertEqual((material.read_text(), draft.read_text(), analysis.read_text()),
+        self.assertNotIn("notes", json.loads((target / "catalog.json").read_text(encoding="utf-8")))
+        self.assertEqual((material.read_text(encoding="utf-8"), draft.read_text(encoding="utf-8"), analysis.read_text(encoding="utf-8")),
                          ("完整原始材料", "未提交草稿", "{}"))
         self.assertEqual(note.read_bytes(), original_note)
         self.assertEqual(state["items"][0]["status"], "ready")

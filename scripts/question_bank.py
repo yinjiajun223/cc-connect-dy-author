@@ -42,13 +42,13 @@ def sha256(data):
 
 
 def _front_and_body(raw: bytes):
-    text = raw.decode("utf-8")
-    if text.startswith("---\n"):
+    text = raw.decode("utf-8").lstrip("\ufeff")
+    if text.startswith(("---\n", "---\r\n")):
         parts = text.split("---", 2)
         if len(parts) == 3:
             front = yaml.safe_load(parts[1])
             if isinstance(front, dict):
-                return front, parts[2].lstrip("\n")
+                return front, parts[2].lstrip("\r\n")
     return {}, text
 
 

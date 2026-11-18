@@ -33,11 +33,11 @@ class SupplementTests(unittest.TestCase):
         helpers.video_bundle(self.shared, WITH_RAW, text="这是面试高频题的讲解。")
         helpers.video_bundle(self.shared, PLAIN, text="普通讲解，没有那两个字。")
         body_note = self.notes[BODY_ONLY]
-        body_note.write_text(body_note.read_text().replace("正文。", "面试时这样回答。"))
+        body_note.write_text(body_note.read_text(encoding="utf-8").replace("正文。", "面试时这样回答。"), encoding="utf-8")
         covered = self.vault / "知识库/面试题库/RAG/x/已有.md"
         covered.parent.mkdir(parents=True)
-        covered.write_text(f"---\ntitle: 已有\ntype: 面试题\nsource_aweme_ids: ['{COVERED}']\n---\n\n# 已有\n")
-        self.notes[COVERED].write_text(self.notes[COVERED].read_text().replace("正文。", "面试"))
+        covered.write_text(f"---\ntitle: 已有\ntype: 面试题\nsource_aweme_ids: ['{COVERED}']\n---\n\n# 已有\n", encoding="utf-8")
+        self.notes[COVERED].write_text(self.notes[COVERED].read_text(encoding="utf-8").replace("正文。", "面试"), encoding="utf-8")
 
     def run_plan(self):
         created = dy_author.initialize(self.config)
@@ -59,7 +59,7 @@ class SupplementTests(unittest.TestCase):
             result = dy_author.next_item(run, state, config, prepare_all=True)
         ready = {r["id"]: r for r in result["ready"]}[WITH_RAW]
         self.assertEqual(ready["mode"], "supplement")
-        self.assertIn("面试高频题", Path(ready["material_file"]).read_text())
+        self.assertIn("面试高频题", Path(ready["material_file"]).read_text(encoding="utf-8"))
         note = self.notes[WITH_RAW]
         body_before = library.read_note(note)[1]
         item_dir = Path(ready["item_dir"])
@@ -91,7 +91,7 @@ class SupplementTests(unittest.TestCase):
         pipeline.write_json(item_dir / "interview.json", {"questions": [{
             "action": "new", "category": ["面试题库", "项目与表达", "答法"], "title": "怎么答",
             "tags": ["x"], "insight": "y", "body_file": "q.md"}]})
-        self.notes[BODY_ONLY].write_text(self.notes[BODY_ONLY].read_text() + "修改\n")
+        self.notes[BODY_ONLY].write_text(self.notes[BODY_ONLY].read_text(encoding="utf-8") + "修改\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "修改"):
             dy_author.commit(run, state, config, BODY_ONLY)
         self.assertEqual(question_bank.scan_questions(self.vault, self.config)[0]["title"], "已有")

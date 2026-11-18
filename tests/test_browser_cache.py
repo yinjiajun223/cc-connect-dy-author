@@ -1,10 +1,12 @@
 import gzip
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import zlib
@@ -35,6 +37,13 @@ def entry(vid=VID, response_id=VID, host='www-hj.douyin.com', encoding='br', sec
 
 
 class CacheTests(unittest.TestCase):
+    def test_default_cache_uses_local_app_data_on_windows(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(cache.sys, 'platform', 'win32'), \
+             patch.dict(os.environ, {'LOCALAPPDATA': folder}):
+            self.assertEqual(cache.default_cache('chrome'),
+                             Path(folder) / 'Google/Chrome/User Data/Default/Cache/Cache_Data')
+
     def write_index(self, root, rows, version=9):
         payload = struct.pack('<QIQQI', 0x656e74657220796f, version, len(rows), 0, 2)
         payload += b''.join(struct.pack('<QqQ', *row) for row in rows)
@@ -153,6 +162,24 @@ class CacheTests(unittest.TestCase):
             (root / '0123456789abcdef_0').write_bytes(entry())
             baseline = cache.snapshot_entries(root=root)
             self.assertEqual(cache.find_detail(VID, root=root, baseline=baseline)['aweme_id'], VID)
+
+    def test_slightly_future_mtime_is_still_a_fresh_response(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / '0123456789abcdef_0'
+            path.write_bytes(entry())
+            stamp = time.time() + 5
+            os.utime(path, (stamp, stamp))
+            self.assertEqual(cache.find_detail(VID, root=root)['aweme_id'], VID)
+
+    def test_implausibly_future_entry_is_ignored(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / '0123456789abcdef_0'
+            path.write_bytes(entry())
+            stamp = time.time() + 3600
+            os.utime(path, (stamp, stamp))
+            self.assertIsNone(cache.find_detail(VID, root=root))
 
     def test_incomplete_filename_snapshot_is_not_used_as_a_complete_baseline(self):
         with tempfile.TemporaryDirectory() as folder:

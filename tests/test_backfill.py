@@ -45,7 +45,7 @@ class BackfillTests(unittest.TestCase):
         lookup = FakeLookup({A: (AUTHOR, "甲"), B: (AUTHOR, "甲")})
         preview = bf.preview(self.config, self.out, lookup=lookup)
         self.assertEqual((preview["resolved"], preview["unresolved"], preview["authors"]), (2, 1, 1))
-        self.assertIn("未能核实", (self.out / "preview.md").read_text())
+        self.assertIn("未能核实", (self.out / "preview.md").read_text(encoding="utf-8"))
         self.assertEqual({p: p.read_bytes() for p in self.notes.values()},
                          {p: p.read_bytes() for p in self.notes.values()})
         bodies = {vid: library.read_note(p)[1] for vid, p in self.notes.items()}
@@ -59,14 +59,14 @@ class BackfillTests(unittest.TestCase):
         self.assertEqual(self.catalogs, {p: p.read_bytes() for p in self.catalogs})
         self.assertTrue((self.vault / "抖音作者" / "未识别作者.md").is_file())
         doc = author_docs.author_docs(self.vault, self.config)[AUTHOR]
-        self.assertIn("已入库 2", doc.read_text())
+        self.assertIn("已入库 2", doc.read_text(encoding="utf-8"))
         self.assertEqual(bf.verify(self.config, self.out)["status"], "ok")
         with self.assertRaisesRegex(ValueError, "已执行过"):
             bf.apply(self.config, self.out)
 
     def test_note_changed_after_preview_blocks_apply(self):
         bf.preview(self.config, self.out, lookup=FakeLookup({A: (AUTHOR, "甲")}))
-        self.notes[A].write_text(self.notes[A].read_text() + "改动\n")
+        self.notes[A].write_text(self.notes[A].read_text(encoding="utf-8") + "改动\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "重新 preview"):
             bf.apply(self.config, self.out)
         self.assertNotIn("douyin_author_id", library.read_note(self.notes[B])[0])
@@ -74,7 +74,7 @@ class BackfillTests(unittest.TestCase):
     def test_rate_limit_stops_lookups_and_reviewed_notes_are_skipped(self):
         state = self.vault / ".dy-author-review-state.json"
         state.write_text(json.dumps({"version": 1, "items": {C: {"initial_status": "未复审", "review": {
-            "outcome": "复审通过", "note_sha256": "0" * 64, "reviewed_at": "2026-09-01"}}}}))
+            "outcome": "复审通过", "note_sha256": "0" * 64, "reviewed_at": "2026-09-01"}}}}), encoding="utf-8")
         lookup = FakeLookup({A: (AUTHOR, "甲"), B: (OTHER_AUTHOR, "乙")}, limit_at=A)
         preview = bf.preview(self.config, self.out, lookup=lookup)
         self.assertEqual(preview["rate_limited_at"], A)

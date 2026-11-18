@@ -4,12 +4,12 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import hashlib
-import json
 import logging
 from pathlib import Path
-import subprocess
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+
+import ocr_backend
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
@@ -75,7 +75,7 @@ def download_images(detail, cache):
                 final = path.with_suffix(suffix)
                 path.replace(final)
                 original = final
-                # Apple Vision decodes the original supported JPEG/PNG. Convert
+                # OCR backends decode the original supported JPEG/PNG. Convert
                 # unsupported containers locally without modifying their content.
                 if fmt not in ("JPEG", "PNG"):
                     final = path.with_suffix(".png")
@@ -121,7 +121,7 @@ def validate_evidence(raw, bundle, cache):
     return raw
 
 
-def extract(bundle_path):
+def extract(bundle_path, config=None):
     from pipeline import load_json, write_json
     bundle_path = Path(bundle_path)
     cache = bundle_path.parent
@@ -137,15 +137,11 @@ def extract(bundle_path):
                 return {"status": "cached", "transcript": str(output), "pages": len(raw["pages"])}
             except StageError:
                 pass
-    script = Path(__file__).with_name("ocr_images.swift")
     paths = [str(cache / entry["file"]) for entry in bundle["images"]]
     try:
-        process = subprocess.run(["xcrun", "swift", str(script), *paths], capture_output=True, text=True, timeout=300)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise StageError("ocr", "无法运行本地 Apple Vision；需要 macOS 和 Xcode Command Line Tools。") from exc
-    if process.returncode:
-        raise StageError("ocr", f"Apple Vision 识别失败：{process.stderr[-800:]}")
-    raw = json.loads(process.stdout)
+        raw = ocr_backend.run(paths, config)
+    except ocr_backend.OcrError as exc:
+        raise StageError("ocr", str(exc)) from None
     pages = raw["pages"]
     for page, image in zip(pages, bundle["images"]):
         page["sha256"] = image["sha256"]

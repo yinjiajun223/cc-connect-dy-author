@@ -15,6 +15,10 @@
 - 面试类写知识层和题库层，其他作品不写题库；补录只补题目，不改原笔记。
 - 通知只发当前明确绑定会话，写前持久记录发送尝试，不因超时自动重发。
 
+## 平台后端
+
+链接解析、分页、下载、去重、检查点、队列与事务提交与平台无关。本地识别按平台替换实现：macOS Apple Silicon 使用 MLX Whisper 与 Apple Vision，Windows x64 使用 faster-whisper 与 RapidOCR；两种后端写出的 `transcript.json` 结构一致，并记录 `asr_backend`，因此材料校验、哈希与检查点行为不变。文件锁在 POSIX 使用 `fcntl.flock`，Windows 使用 `msvcrt` 字节锁；可见浏览器恢复在 macOS 使用 LaunchServices/AppleScript，Windows 直接启动已安装浏览器并跳过标签页管理。
+
 ## 本次公开化变更
 
 核心的作者分页、下载、转写、OCR、去重、知识/题库写入与事务算法保留。仅将私有路径换成下载者配置；通知路径从本地配置读取；安装专属测试改为可移植安装测试。`scripts/configure.py` 与 `scripts/doctor.py` 是安装工具，不参与生产导入算法。

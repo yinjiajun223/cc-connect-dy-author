@@ -190,7 +190,14 @@ def dy_changes(vault: Path, config: dict, changes: dict, events: list[dict],
     extra_index items are {"path", "cells"} that replace any row with that path;
     extra_logs items are complete 8-cell DY log rows appended as new events.
     """
-    index, logs = load(vault)
+    index_path, log_path = vault / INDEX_NAME, vault / LOG_NAME
+    state_path = vault / config.get("review_state_file", review_log.STATE_FILE)
+    # A new Vault gets its catalogs in the same transaction as its first note.
+    if (all(not path.exists() and not path.is_symlink() for path in (index_path, log_path, state_path))
+            and not any(vault.rglob("*.md"))):
+        index, logs = [], []
+    else:
+        index, logs = load(vault)
     by_path = {row["path"]: row for row in dy_rows}
     extra_paths = {row["path"] for row in extra_index}
     if extra_paths & set(by_path):
@@ -209,7 +216,6 @@ def dy_changes(vault: Path, config: dict, changes: dict, events: list[dict],
             raise ValueError("题目文档索引行列数无效")
         index.append({"path": row["path"], "cells": list(row["cells"])})
 
-    state_path = vault / config.get("review_state_file", review_log.STATE_FILE)
     state = review_log.load_state(state_path, changes)
     for row in dy_rows:
         state["items"].setdefault(row["aweme_id"], {"initial_status": "未登记"})
@@ -257,7 +263,6 @@ def dy_changes(vault: Path, config: dict, changes: dict, events: list[dict],
 
     index_raw, log_raw = render_index(index), render_log(logs)
     validate_rendered(index_raw, log_raw, len(index), len(logs))
-    index_path, log_path = vault / INDEX_NAME, vault / LOG_NAME
     changes[index_path], changes[log_path] = index_raw, log_raw
     return index_path, log_path
 

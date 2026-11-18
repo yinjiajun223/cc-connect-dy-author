@@ -175,7 +175,7 @@ class AuthorWorksTests(unittest.IsolatedAsyncioTestCase):
                                 source_id=VIDEO_A, source_kind="video")
         result = works.save_listing(listing, {"cache_dir": str(root)}, output_dir=root / "out")
         self.assertEqual((result["videos"], result["notes"]), (1, 1))
-        self.assertEqual(Path(result["links_file"]).read_text().splitlines(),
+        self.assertEqual(Path(result["links_file"]).read_text(encoding="utf-8").splitlines(),
                          [f"https://www.douyin.com/video/{VIDEO_A}", f"https://www.douyin.com/note/{IMAGE}"])
         prior = works.verified_prior_result(Path(result["result_file"]), VIDEO_A, AUTHOR)
         self.assertEqual(prior["nickname"], "T")
@@ -203,6 +203,7 @@ class IndependenceTests(unittest.TestCase):
                           "json", "logging", "math", "multiprocessing", "os", "pathlib", "re", "shutil",
                           "struct", "subprocess", "sys", "tempfile", "time", "unicodedata", "urllib",
                           "uuid", "wave", "zlib", "__future__", "yaml", "f2", "yt_dlp", "mlx_whisper",
+                          "faster_whisper", "rapidocr_onnxruntime",
                           "huggingface_hub", "numpy", "PIL", "imageio_ffmpeg", "brotli"} | sys.stdlib_module_names
         for path in scripts.glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -220,7 +221,7 @@ class IndependenceTests(unittest.TestCase):
                     self.fail(f"{path.name} manipulates sys.path")
 
     def test_public_config_template_is_independent(self):
-        config = json.loads((Path(works.__file__).resolve().parents[1] / "config.example.json").read_text())
+        config = json.loads((Path(works.__file__).resolve().parents[1] / "config.example.json").read_text(encoding="utf-8"))
         self.assertTrue(config["python"].endswith("/dy-author/.venv/bin/python"))
         self.assertTrue(config["cache_dir"].endswith("/dy-author/.cache"))
         self.assertEqual(config["material_cache_dirs"], [])

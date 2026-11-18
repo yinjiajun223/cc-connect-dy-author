@@ -102,12 +102,12 @@ class PlanTests(QueueBase):
         run, state, config, result = self.plan(works)
         self.assertEqual(result["counts"], {"pending": 2, "ready": 0, "saved": 0, "exists": 1, "skipped": 1, "failed": 0,
                                             "unsupported": 0})
-        self.assertNotIn("暂不支持", Path(result["author_doc"]).read_text())
+        self.assertNotIn("暂不支持", Path(result["author_doc"]).read_text(encoding="utf-8"))
         self.assertTrue(result["source_complete"])
         self.assertEqual(dy_author.select_item(state, IMAGE)["url"], f"https://www.douyin.com/note/{IMAGE}")
         doc = Path(result["author_doc"])
         self.assertEqual(doc.relative_to(self.vault).as_posix(), "抖音作者/测试作者.md")
-        text = doc.read_text()
+        text = doc.read_text(encoding="utf-8")
         self.assertIn("| 已入库 |", text)
         self.assertIn("纯配乐", text)
         self.assertIn("清单完整", text)
@@ -122,7 +122,7 @@ class PlanTests(QueueBase):
         self.assertEqual(result["counts"]["pending"], 1)
         self.assertEqual(result["counts"]["unsupported"], 1)
         self.assertEqual(result["unsupported"][0]["url"], f"https://www.douyin.com/video/{ARTICLE}")
-        text = Path(result["author_doc"]).read_text()
+        text = Path(result["author_doc"]).read_text(encoding="utf-8")
         self.assertIn(f"| [{ARTICLE}](https://www.douyin.com/video/{ARTICLE}) | 文章 | 暂不支持 | 抖音文章暂不支持，未导入 |", text)
         self.assertIn("失败 0，暂不支持 1", text)
         prepared = []
@@ -149,14 +149,14 @@ class PlanTests(QueueBase):
         entry = author_docs.load_state(self.vault, self.config)["authors"][AUTHOR]
         self.assertIn(FIRST, entry["unsupported"])
         self.assertNotIn(FIRST, entry["failed"])
-        self.assertIn("暂不支持", Path(result["author_doc"]).read_text())
+        self.assertIn("暂不支持", Path(result["author_doc"]).read_text(encoding="utf-8"))
 
     def test_partial_listing_keeps_seed_and_reports_retry(self):
         works = listing((SECOND, "video", ""), complete=False, reason="http_403_argus_uifid_not_found")
         run, state, config, result = self.plan(works)
         self.assertFalse(result["source_complete"])
         self.assertEqual([i["id"] for i in state["items"]], [FIRST, SECOND])
-        self.assertIn("清单不完整（http_403_argus_uifid_not_found）", Path(result["author_doc"]).read_text())
+        self.assertIn("清单不完整（http_403_argus_uifid_not_found）", Path(result["author_doc"]).read_text(encoding="utf-8"))
         self.assertEqual(result["retry_command"], f"/dy-author https://www.douyin.com/video/{FIRST}")
 
     def test_unknown_author_processes_only_seed_without_doc(self):
@@ -180,7 +180,7 @@ class PrepareCommitTests(QueueBase):
             ready = dy_author.next_item(run, state, config)
             self.assertEqual(ready["id"], FIRST)
             self.assertFalse(ready["interview_required"])
-            self.assertEqual(Path(ready["material_file"]).read_text(), "Synthetic knowledge evidence.")
+            self.assertEqual(Path(ready["material_file"]).read_text(encoding="utf-8"), "Synthetic knowledge evidence.")
             self.write_note(ready)
             self.assertEqual(dy_author.commit(run, state, config, FIRST)["status"], "saved")
             third = dy_author.next_item(run, state, config, prepare_all=True, limit=2)
@@ -188,7 +188,7 @@ class PrepareCommitTests(QueueBase):
         note = library.find_existing(self.vault, FIRST)
         front, _ = library.read_note(note)
         self.assertEqual((front["douyin_author"], front["douyin_author_id"]), ("测试作者", AUTHOR))
-        doc = Path(state["author_doc"]).read_text()
+        doc = Path(state["author_doc"]).read_text(encoding="utf-8")
         self.assertIn("已入库 1，待导入 2", doc)
         index, log = unified_store.load(self.vault)
         self.assertEqual((len(index), len(log)), (1, 1))
@@ -227,8 +227,8 @@ class PrepareCommitTests(QueueBase):
         index, log = unified_store.load(self.vault)
         self.assertEqual(sorted(r["cells"][1] for r in index), ["知识笔记", "面试题"])
         self.assertEqual(sorted(r[2] for r in log), ["新增", "新增面试题"])
-        self.assertIn("## 面试题库 / RAG / 检索与重排", (self.vault / unified_store.INDEX_NAME).read_text())
-        self.assertIn("为什么需要重排", Path(state["author_doc"]).read_text())
+        self.assertIn("## 面试题库 / RAG / 检索与重排", (self.vault / unified_store.INDEX_NAME).read_text(encoding="utf-8"))
+        self.assertIn("为什么需要重排", Path(state["author_doc"]).read_text(encoding="utf-8"))
         self.assertEqual(len(library.scan(self.vault)), 1)
         # A non-interview work cannot carry question documents.
         self.write_note(ready[FIRST])
@@ -272,12 +272,12 @@ class PrepareCommitTests(QueueBase):
         with self.patched():
             result = dy_author.next_item(run, state, config, prepare_all=True)
         self.assertEqual(result["counts"]["failed"], 1)
-        doc = Path(state["author_doc"]).read_text()
+        doc = Path(state["author_doc"]).read_text(encoding="utf-8")
         self.assertIn("| 失败 |", doc)
         reason = Path(dy_author.select_item(state, FIRST)["artifacts"]["reason_file"])
         reason.write_text("只有配乐，没有讲解", encoding="utf-8")
         dy_author.mark_item(run, state, config, FIRST, "skipped")
-        self.assertIn("只有配乐", Path(state["author_doc"]).read_text())
+        self.assertIn("只有配乐", Path(state["author_doc"]).read_text(encoding="utf-8"))
         run2, state2, config2, result2 = self.plan(listing((FIRST, "video", ""), (BAD, "video", ""), (SECOND, "video", "")))
         statuses = {i["id"]: i["status"] for i in state2["items"]}
         self.assertEqual(statuses, {FIRST: "skipped", BAD: "pending", SECOND: "pending"})
@@ -287,7 +287,7 @@ class PrepareCommitTests(QueueBase):
         with self.patched():
             ready = dy_author.next_item(run, state, config, prepare_all=True)["ready"][0]
         self.write_note(ready)
-        Path(ready["material_file"]).write_text("changed")
+        Path(ready["material_file"]).write_text("changed", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "模型材料"):
             dy_author.commit(run, state, config, FIRST)
 

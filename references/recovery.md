@@ -26,7 +26,7 @@
 
 ## 仅用户明确启用的可见恢复
 
-只有用户明确要求时才在当前配置设置 `auto_browser_recovery=true`。`prefer_browser_media=false`、`background_detail_first=true` 仍使后台请求优先；可见恢复每条最多一次，打开前把 attempted 写入 state.json。以同一完整 profile 传入 Chrome 的 user-data-dir/profile-directory，最多等待配置的缓存预算；默认 browser_recovery_wait_seconds=8、browser_media_timeout_seconds=40。仅尝试关闭本次打开、严格匹配作品 ID 的新增标签；已有标签保留，未取得自动化授权时不关闭。
+只有用户明确要求时才在当前配置设置 `auto_browser_recovery=true`。`prefer_browser_media=false`、`background_detail_first=true` 仍使后台请求优先；可见恢复每条最多一次，打开前把 attempted 写入 state.json。以同一完整 profile 传入 Chrome 的 user-data-dir/profile-directory，最多等待配置的缓存预算；默认 browser_recovery_wait_seconds=8、browser_media_timeout_seconds=40。仅尝试关闭本次打开、严格匹配作品 ID 的新增标签；已有标签保留，未取得自动化授权时不关闭。Windows 上改为直接启动注册表或常见目录中找到的 Chrome/Edge/Firefox，没有 AppleScript 等价的标签页管理，`opened_tab_closed` 为 `unavailable`，不会自动关闭新标签。
 
 关闭新增标签不等于没有弹窗，所以默认保持 false。脚本不点击、不输入、不操作登录或验证码。`page_state=not_observed` 只表示未观察实际页面，不能称已登录、已播放或已刷新到有效 Cookie。下载阶段失败保留 download 原因，不能用后续详情失败覆盖。
 

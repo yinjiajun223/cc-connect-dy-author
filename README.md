@@ -7,7 +7,7 @@
 ## 核心功能
 
 - 以一条作品识别作者，收集其公开视频与图文，按作品 ID 查重；每批最多十条，每条完成立即保存。
-- 从真实音轨做本地 Whisper 转写；图文下载完整图片并用 macOS Vision OCR，Agent 再逐页看图。
+- 从真实音轨做本地 Whisper 转写；图文下载完整图片并做本地 OCR（macOS Apple Vision / Windows RapidOCR），Agent 再逐页看图。
 - 生成知识笔记、维护作者文档、知识总索引与导入总日志；保留已有笔记和“我的补充”。
 - 对原始材料含“面试”的作品生成/合并面试题；`/dy-author 补录` 为已有面试类知识笔记补建题库。
 - 保存运行检查点；后续条目失败或模型额度耗尽不回滚已经成功的作品。
@@ -17,7 +17,14 @@
 
 ## 宿主与运行依赖
 
-完整媒体路线面向 **macOS Apple Silicon（M 系列）+ Python 3.12**。本地 ASR 使用 MLX，图文 OCR 使用 Swift/Vision；Windows、Linux、Intel Mac 的完整流程目前不承诺支持。需要 Apple Command Line Tools（含 Swift），以及可用的 Google Chrome profile。首次转写会从 Hugging Face 下载模型，需要网络和本地磁盘空间。FFmpeg 可来自系统，或依赖中的 `imageio-ffmpeg`。
+完整媒体路线支持 **macOS Apple Silicon（M 系列）+ Python 3.12** 与 **Windows 10/11 x64 + Python 3.12**；两个平台使用相同的队列、去重、检查点和写入逻辑，只替换本地识别组件：
+
+| 平台 | 本地 ASR | 图文 OCR | 额外系统依赖 |
+| --- | --- | --- | --- |
+| macOS Apple Silicon | MLX Whisper（`mlx-whisper`） | Apple Vision（Swift） | Apple Command Line Tools（含 Swift） |
+| Windows 10/11 x64 | faster-whisper（CPU，可用 `asr_device=cuda`） | RapidOCR（ONNX Runtime） | 无；FFmpeg 来自系统或 `imageio-ffmpeg` |
+
+Linux、Intel Mac 与 Windows ARM 的完整流程目前不承诺支持。两个平台都需要可用的 Google Chrome profile。首次转写会从 Hugging Face 下载模型，需要网络和本地磁盘空间。FFmpeg 可来自系统，或依赖中的 `imageio-ffmpeg`。
 
 宿主 Agent 需要读取 Skill、读写本地文件、执行脚本，并能查看图文原图。只运行 Python 不会自动生成知识笔记；模型账号与服务由用户自行配置。
 
@@ -33,6 +40,8 @@
 
 ### 安装依赖
 
+macOS：
+
 ```sh
 git clone https://github.com/llm-xiaoye/cc-connect-dy-author.git
 cd cc-connect-dy-author
@@ -42,9 +51,18 @@ cd cc-connect-dy-author
 ./.venv/bin/python -m pip install -r requirements.lock.txt
 ```
 
-也可以在 GitHub 点 **Code → Download ZIP** 后解压，再在解压目录执行后两步。不要复制开发者的虚拟环境，不要把仓库放进会同步公开的 Vault 内。
+Windows（PowerShell，先安装 64 位 Python 3.12）：
 
-`requirements.lock.txt` 保留原功能所用版本，包含固定 commit 与摘要的 F2 源码依赖；需要访问 PyPI/GitHub。它是版本固定清单，**不是全包 wheel hash 锁**，不要加 `--require-hashes`。依赖安装失败时保留错误，不把它当成作品或技能处理失败；不建议任意升级 F2、yt-dlp 或 MLX 后仍假定行为不变。
+```powershell
+git clone https://github.com/llm-xiaoye/cc-connect-dy-author.git
+cd cc-connect-dy-author
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt
+```
+
+也可以在 GitHub 点 **Code → Download ZIP** 后解压，再在解压目录执行后两步。不要复制开发者的虚拟环境，不要把仓库放进会同步公开的 Vault 内。下文命令以 macOS 的 `./.venv/bin/python` 为例；Windows 请改用 `.\.venv\Scripts\python.exe`，路径同样换成本机绝对路径。
+
+`requirements.lock.txt` 保留原功能所用版本，包含固定 commit 与摘要的 F2 源码依赖；需要访问 PyPI/GitHub。它使用环境标记区分平台：macOS Apple Silicon 安装 MLX 依赖，Windows 安装 faster-whisper、RapidOCR 及其运行依赖。它是版本固定清单，**不是全包 wheel hash 锁**，不要加 `--require-hashes`。依赖安装失败时保留错误，不把它当成作品或技能处理失败；不建议任意升级 F2、yt-dlp 或 MLX 后仍假定行为不变。
 
 ### 生成配置
 
@@ -53,6 +71,8 @@ cd cc-connect-dy-author
 ```sh
 ./.venv/bin/python scripts/configure.py --vault "/absolute/path/to/your/ObsidianVault"
 ```
+
+Windows 示例：`.\.venv\Scripts\python.exe scripts\configure.py --vault "D:\Obsidian\YourVault"`。
 
 需要 CC Connect 命令集成时，改用下面的命令。两种配置方式选择一种，不要对已有配置重复执行。`--cc-workspace` 是 CC Connect 项目的实际工作目录，不是程序安装目录或 .claude 目录。
 
@@ -66,7 +86,7 @@ cd cc-connect-dy-author
 
 1. 验证 Vault 与显式提供的路径，不新建 Chrome 资料。
 2. 生成权限为 `0600`、被 Git 忽略的 `config.json`，记录当前虚拟环境入口；默认 `browser_profile=null` 自动识别、`auto_browser_recovery=false`。获取作者清单及下载作品默认不弹出页面。
-3. 指定 --cc-workspace 时，在 work_dir 创建 `.claude/skills/dy-author` 链接与 `.claude/commands/dy-author.md`。
+3. 指定 --cc-workspace 时，在 work_dir 创建 `.claude/skills/dy-author` 链接与 `.claude/commands/dy-author.md`；Windows 优先创建符号链接，权限不足时自动改用目录联接（junction）。
 
 已有配置、同名技能或命令时拒绝覆盖。更新时保留个人配置、虚拟环境与缓存。旧安装升级后，请将当前 `config.json` 的 `auto_browser_recovery` 设为 `false`；这一关闭设置也约束旧批次。其他运行参数仍使用创建时的快照，不删除旧批次或已保存笔记。
 
@@ -130,7 +150,11 @@ cd cc-connect-dy-author
 
 - **接口 403/429、翻页中断**：会记录清单不完整；已获取作品可继续入库，不能称“全部”。不反复刷新，不编造签名。
 - **抖音长文字文章（type 163）**：目前只列清单、标记暂不支持，不拿背景音乐冒充正文。视频和图文保留原支持范围。
-- **需要登录/Keychain 权限**：只在自己的 Chrome 完成必要交互。macOS 可能询问读取 Chrome 密钥/控制 Chrome 的权限；不愿授权时用无浏览器路线并接受其限制。
+- **需要登录/系统权限**：只在自己的 Chrome 完成必要交互。macOS 可能询问读取 Chrome 密钥/控制 Chrome 的权限；Windows 从当前系统用户的 Chrome 资料只读会话，读取受浏览器自身加密策略和文件权限影响，失败时报告 `read_error`。不愿授权时用无浏览器路线并接受其限制。
+- **Windows 提示 `cookie_database_inaccessible`**：先在对应的 Chrome 资料中确认抖音已登录，保存工作后完全退出 Chrome（包括后台进程），再运行诊断。若仍失败，检查 Chrome 资料路径和读取权限。
+- **Windows 提示 `cookie_decryption_failed`**：按[独立 Chrome 资料配置](docs/configuration.md#在-windows-使用独立-chrome-资料)登录并切换资料，再运行诊断。
+- **Windows 提示缺少 faster_whisper / rapidocr_onnxruntime**：通常是依赖装到了另一个 Python 解释器。用 `.\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt` 重装，再运行 `.\.venv\Scripts\python.exe -B scripts\doctor.py` 检查。
+- **Windows 可见恢复**：只有显式启用 `auto_browser_recovery=true` 才自动打开已安装的 Chrome/Edge/Firefox；Windows 没有 AppleScript 等价的标签页管理，本次打开的新标签不会自动关闭（`opened_tab_closed=unavailable`）。
 - **下载成功但没笔记**：Agent 仍需读取完整材料并写作/commit；标题、封面和摘要不足以入库。
 - **命令没出现**：检查安装的 work_dir 与当前会话一致、`.claude` 适配器支持情况、安装路径是否移动，然后刷新/重启会话。
 - **运行出错**：保留原批次；先检查具体阶段。浏览器缓存扫描不完整不能判为作品不可提取。恢复说明见 [references/recovery.md](references/recovery.md)。
@@ -147,7 +171,7 @@ cd cc-connect-dy-author
 ./.venv/bin/python -B -m unittest discover -s tests
 ```
 
-这些是本地回归，使用临时 Vault 与受控材料，不发真实抖音请求或主动聊天通知；它们不能保证未来平台接口一直可用。设计和保留的行为边界见 [docs/design.md](docs/design.md)。
+Windows 使用 `.\.venv\Scripts\python.exe -B -m unittest discover -s tests`。这些是本地回归，使用临时 Vault 与受控材料，不发真实抖音请求或主动聊天通知；它们不能保证未来平台接口一直可用。设计和保留的行为边界见 [docs/design.md](docs/design.md)。
 
 ## 许可证
 

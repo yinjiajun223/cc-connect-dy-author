@@ -6,7 +6,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
+import subprocess
 import sys
+
+import console
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,6 +22,31 @@ def directory(value, label):
     return path
 
 
+def path_exists(path):
+    return path.exists() or path.is_symlink() or (sys.platform == "win32" and os.path.isjunction(path))
+
+
+def link_skill(skill_link, root):
+    try:
+        skill_link.symlink_to(root, target_is_directory=True)
+        return
+    except OSError:
+        if sys.platform != "win32":
+            raise
+    # Windows without symlink privilege: a junction keeps the same directory-link semantics.
+    result = subprocess.run(["cmd", "/c", "mklink", "/J", str(skill_link), str(root)],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise ValueError("创建技能目录链接失败：" + (detail[:300] or "未知错误"))
+
+
+def default_asr_model():
+    if platform.system() == "Darwin" and platform.machine().lower() in ("arm64", "aarch64"):
+        return None
+    return "small"
+
+
 def configure(args, root=ROOT):
     root = Path(root).resolve(strict=True)
     vault = directory(args.vault, "Vault")
@@ -27,6 +56,9 @@ def configure(args, root=ROOT):
     config = json.loads((root / "config.example.json").read_text(encoding="utf-8"))
     config.update(vault=str(vault), cache_dir=str(root / ".cache"),
                   python=os.path.abspath(sys.executable), material_cache_dirs=[])
+    platform_asr_model = default_asr_model()
+    if platform_asr_model:
+        config["asr_model"] = platform_asr_model
     if args.no_browser:
         if args.chrome_profile or args.chrome_cache:
             raise ValueError("--no-browser 不能与 Chrome 路径同时使用")
@@ -60,16 +92,17 @@ def configure(args, root=ROOT):
         workspace = directory(args.cc_workspace, "cc-connect work_dir")
         skill_link = workspace / ".claude/skills/dy-author"
         command_path = workspace / ".claude/commands/dy-author.md"
-        if skill_link.exists() or skill_link.is_symlink():
+        if path_exists(skill_link):
             raise ValueError("work_dir 已有 dy-author skill；不覆盖现有安装")
-        if command_path.exists() or command_path.is_symlink():
+        if path_exists(command_path):
             raise ValueError("work_dir 已有 dy-author 命令；不覆盖现有安装")
         template = (root / "integrations/cc-connect/dy-author.md").read_text(encoding="utf-8")
         if template.count("@@SKILL_DIR@@") != 1:
             raise ValueError("命令模板的 skill 路径标记必须恰好一个")
         if any(char in str(root) for char in "\r\n`"):
             raise ValueError("安装路径不能含换行或 Markdown backtick")
-        command_text = template.replace("@@SKILL_DIR@@", str(root))
+        # Forward slashes keep the Markdown command readable on Windows too.
+        command_text = template.replace("@@SKILL_DIR@@", root.as_posix())
     # All supplied paths and existing installation conflicts are checked before writes.
     import chrome_session
     _, session = chrome_session.resolve_config(config)
@@ -80,7 +113,7 @@ def configure(args, root=ROOT):
     if skill_link is not None:
         skill_link.parent.mkdir(parents=True, exist_ok=True)
         command_path.parent.mkdir(parents=True, exist_ok=True)
-        skill_link.symlink_to(root, target_is_directory=True)
+        link_skill(skill_link, root)
         with command_path.open("x", encoding="utf-8") as handle:
             handle.write(command_text)
     return {"status": "configured", "config_file": str(config_path),
@@ -102,6 +135,7 @@ def parser():
 
 
 def main():
+    console.force_utf8()
     try:
         print(json.dumps(configure(parser().parse_args()), ensure_ascii=False))
         return 0

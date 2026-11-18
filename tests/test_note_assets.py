@@ -54,7 +54,7 @@ class AssetTests(unittest.TestCase):
 
     def test_original_images_inline_and_duplicate_is_noop(self):
         note = Path(self.save()["note"])
-        targets = [(note.parent / unquote(u)).resolve() for u in re.findall(r"!\[原图 \d+\]\(([^)]+)\)", note.read_text())]
+        targets = [(note.parent / unquote(u)).resolve() for u in re.findall(r"!\[原图 \d+\]\(([^)]+)\)", note.read_text(encoding="utf-8"))]
         self.assertEqual(len(targets), 2)
         for page, path in enumerate(targets, 1):
             self.assertTrue(path.is_relative_to(self.vault / "附件"))

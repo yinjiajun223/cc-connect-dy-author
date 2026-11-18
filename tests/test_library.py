@@ -24,6 +24,24 @@ class LibraryTests(unittest.TestCase):
         return library.save_note(self.config, vid, library.validate_analysis(data or analysis()),
                                  body or skeleton(), source_url=f"https://www.douyin.com/video/{vid}", **kwargs)
 
+    def test_first_save_bootstraps_catalogs_in_empty_vault(self):
+        (self.vault / unified_store.INDEX_NAME).unlink()
+        (self.vault / unified_store.LOG_NAME).unlink()
+        result = self.save(A)
+        self.assertEqual(result["status"], "saved")
+        index, log = unified_store.load(self.vault)
+        self.assertEqual((len(index), len(log)), (1, 1))
+        self.assertEqual(self.save(A)["status"], "exists")
+
+    def test_missing_catalogs_do_not_reset_existing_vault(self):
+        saved = Path(self.save(A)["note"])
+        (self.vault / unified_store.INDEX_NAME).unlink()
+        (self.vault / unified_store.LOG_NAME).unlink()
+        with self.assertRaisesRegex(ValueError, "两份总览缺失"):
+            self.save(B)
+        self.assertTrue(saved.is_file())
+        self.assertIsNone(library.find_existing(self.vault, B))
+
     def test_unified_catalogs_dedup_and_same_title_suffix(self):
         result = self.save(A)
         note = Path(result["note"])
@@ -76,13 +94,13 @@ class LibraryTests(unittest.TestCase):
     def test_scan_ignores_author_and_question_documents_and_dot_dirs(self):
         self.save(A, author={"sec_uid": AUTHOR, "nickname": "甲"})
         (self.vault / "抖音作者").mkdir()
-        (self.vault / "抖音作者" / "甲.md").write_text(f"---\ntype: 抖音作者\ndouyin_author_id: {AUTHOR}\n---\n")
+        (self.vault / "抖音作者" / "甲.md").write_text(f"---\ntype: 抖音作者\ndouyin_author_id: {AUTHOR}\n---\n", encoding="utf-8")
         q = self.vault / "知识库" / "面试题库" / "RAG" / "重排" / "题.md"
         q.parent.mkdir(parents=True)
-        q.write_text(f"---\ntitle: 题\ntype: 面试题\nsource_aweme_ids: ['{A}']\n---\n")
+        q.write_text(f"---\ntitle: 题\ntype: 面试题\nsource_aweme_ids: ['{A}']\n---\n", encoding="utf-8")
         hidden = self.vault / ".trash" / "x.md"
         hidden.parent.mkdir()
-        hidden.write_text(f"---\naweme_id: '{A}'\n---\n")
+        hidden.write_text(f"---\naweme_id: '{A}'\n---\n", encoding="utf-8")
         rows = library.existing_map(self.vault)
         self.assertEqual(list(rows), [A])
         self.assertEqual(rows[A]["douyin_author_id"], AUTHOR)
@@ -104,7 +122,7 @@ class LibraryTests(unittest.TestCase):
         index, log = unified_store.load(self.vault)
         self.assertIn(relative, [row["path"] for row in index])
         self.assertIn("新增面试题", [row[2] for row in log])
-        self.assertIn("## 面试题库 / RAG / 检索与重排", (self.vault / unified_store.INDEX_NAME).read_text())
+        self.assertIn("## 面试题库 / RAG / 检索与重排", (self.vault / unified_store.INDEX_NAME).read_text(encoding="utf-8"))
 
     def test_write_extras_skips_unchanged_files(self):
         path = self.vault / "抖音作者" / "x.md"

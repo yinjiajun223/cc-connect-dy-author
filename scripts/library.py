@@ -7,7 +7,7 @@ from __future__ import annotations
 import base64
 from contextlib import contextmanager
 from datetime import datetime
-import fcntl
+import file_lock
 import json
 import os
 from pathlib import Path
@@ -17,6 +17,9 @@ import tempfile
 import yaml
 
 REMOVED_SECTIONS = {"回听定位", "来源", "原音频", "带时间戳的语音转写"}
+WINDOWS_RESERVED_NAMES = {"con", "prn", "aux", "nul",
+                          *(f"com{number}" for number in range(1, 10)),
+                          *(f"lpt{number}" for number in range(1, 10))}
 
 
 def now():
@@ -36,12 +39,14 @@ def read_note(path):
 
 
 def read_note_text(text):
-    if text.startswith("---\n"):
+    # Notes edited elsewhere on Windows may carry a BOM or CRLF line endings.
+    text = text.lstrip("\ufeff")
+    if text.startswith(("---\n", "---\r\n")):
         parts = text.split("---", 2)
         if len(parts) == 3:
             front = yaml.safe_load(parts[1])
             if isinstance(front, dict):
-                return front, parts[2].lstrip("\n")
+                return front, parts[2].lstrip("\r\n")
     return {}, text
 
 
@@ -94,7 +99,7 @@ def scan(vault, replacements=None):
             if content is ...:
                 front, _ = read_note(path)
             else:
-                front = yaml.safe_load(content.decode().split("---", 2)[1])
+                front = yaml.safe_load(content.decode("utf-8").split("---", 2)[1])
         except (ValueError, IndexError, yaml.YAMLError):
             continue
         if not isinstance(front, dict) or not re.fullmatch(r"\d{16,22}", str(front.get("aweme_id", ""))):
@@ -122,6 +127,9 @@ def slug(title):
     value = re.sub("-+", "-", value)[:100].rstrip(" .-")
     if not value or value.isdigit():
         raise ValueError("标题必须是可读的知识主题，不能只有数字。")
+    # Windows cannot create CON/NUL/COM1-style names; keep the note importable.
+    if value.split(".", 1)[0].lower() in WINDOWS_RESERVED_NAMES:
+        value += "-"
     return value
 
 
@@ -210,7 +218,16 @@ def atomic_write(path, content, exclusive=False):
         os.fsync(f.fileno())
     try:
         if exclusive:
-            os.link(temp, path)
+            try:
+                os.link(temp, path)
+            except OSError:
+                # Filesystems without hard links (FAT/exFAT, some network shares)
+                # still need create-if-absent semantics for the transaction journal.
+                if path.exists():
+                    raise
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(temp.read_bytes())
         else:
             os.replace(temp, path)
     finally:
@@ -221,10 +238,10 @@ def atomic_write(path, content, exclusive=False):
 def locked(vault):
     # Serialize catalog writes before acquiring this package's note lock.
     with inside(vault, ".unified-catalog.lock").open("a") as shared:
-        fcntl.flock(shared, fcntl.LOCK_EX)
+        file_lock.lock(shared)
         try:
             with inside(vault, ".dy-author-library.lock").open("a") as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
+                file_lock.lock(f)
                 try:
                     marker = Path(vault).resolve() / ".knowledge-migration-in-progress.json"
                     parent_marker = Path(vault).resolve().parent / ".knowledge-migration-in-progress.json"
@@ -233,16 +250,16 @@ def locked(vault):
                     recover(vault)
                     yield
                 finally:
-                    fcntl.flock(f, fcntl.LOCK_UN)
+                    file_lock.unlock(f)
         finally:
-            fcntl.flock(shared, fcntl.LOCK_UN)
+            file_lock.unlock(shared)
 
 
 def recover(vault):
     journal = inside(vault, ".dy-author-transaction.json")
     if not journal.exists():
         return
-    data = json.loads(journal.read_text())
+    data = json.loads(journal.read_text(encoding="utf-8"))
     # Never undo an unrelated edit made after an interrupted transaction.
     for row in data["files"]:
         path = inside(vault, row["path"])
@@ -269,7 +286,7 @@ def transact(vault, changes):
         records.append({"path": path.relative_to(vault).as_posix(),
                         "before": base64.b64encode(before).decode() if before is not None else None,
                         "after": base64.b64encode(after).decode() if after is not None else None})
-    atomic_write(journal, json.dumps({"files": records}, ensure_ascii=False).encode(), exclusive=True)
+    atomic_write(journal, json.dumps({"files": records}, ensure_ascii=False).encode("utf-8"), exclusive=True)
     applied = []
     try:
         for row in records:
@@ -331,7 +348,7 @@ def save_note(config, vid, analysis, body, collections=(), images=(), source_url
             front["collections"] = list(collections)
         from note_assets import stage
         body, changes, attachments = stage(vault, config, path, clean_body(body), images)
-        changes[path] = render_note(front, body_for_title(body, analysis["title"])).encode()
+        changes[path] = render_note(front, body_for_title(body, analysis["title"])).encode("utf-8")
         events = [{"time": now(), "action": "新增", "path": path.relative_to(vault).as_posix(),
                    "title": analysis["title"], "source_url": source_url}]
         extra_index, extra_logs, extras = [], [], {}

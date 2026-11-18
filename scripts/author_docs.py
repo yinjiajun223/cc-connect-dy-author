@@ -70,13 +70,13 @@ def safe_name(nickname, sec_uid):
 
 
 def _front_body(raw: bytes):
-    text = raw.decode("utf-8")
-    if text.startswith("---\n"):
+    text = raw.decode("utf-8").lstrip("\ufeff")
+    if text.startswith(("---\n", "---\r\n")):
         parts = text.split("---", 2)
         if len(parts) == 3:
             front = yaml.safe_load(parts[1])
             if isinstance(front, dict):
-                return front, parts[2].lstrip("\n")
+                return front, parts[2].lstrip("\r\n")
     return {}, text
 
 
@@ -276,20 +276,22 @@ def insert_author_keys(raw: bytes, nickname: str, sec_uid: str) -> bytes:
     if not SEC_UID_RE.fullmatch(str(sec_uid)):
         raise ValueError("作者 sec_uid 格式错误。")
     nickname = str(nickname or "").strip() or sec_uid[:12]
-    text = raw.decode("utf-8")
-    if not text.startswith("---\n"):
+    text = raw.decode("utf-8").lstrip("\ufeff")
+    newline = "\r\n" if text.startswith("---\r\n") else "\n"
+    if not text.startswith("---" + newline):
         raise ValueError("笔记缺少属性区，未补作者。")
-    end = text.find("\n---", 3)
+    end = text.find(newline + "---", 3)
     if end < 0:
         raise ValueError("笔记属性区未闭合，未补作者。")
-    head, rest = text[:end + 1], text[end + 1:]
+    end += len(newline)
+    head, rest = text[:end], text[end:]
     if re.search(r"^douyin_author(?:_id)?:", head, re.M):
         raise ValueError("笔记已含作者属性。")
     match = re.search(r"^aweme_id:.*\n", head, re.M)
     if not match:
         raise ValueError("笔记属性区没有 aweme_id 行。")
-    lines = (f"douyin_author: {json.dumps(nickname, ensure_ascii=False)}\n"
-             f"douyin_author_id: {json.dumps(sec_uid, ensure_ascii=False)}\n")
+    lines = (f"douyin_author: {json.dumps(nickname, ensure_ascii=False)}{newline}"
+             f"douyin_author_id: {json.dumps(sec_uid, ensure_ascii=False)}{newline}")
     new = head[:match.end()] + lines + head[match.end():] + rest
     old_front, old_body = library.read_note_text(text)
     new_front, new_body = library.read_note_text(new)

@@ -23,6 +23,7 @@ import time
 import author_docs
 import author_works
 import browser_cache
+import console
 import douyin_access
 import library
 import pipeline
@@ -326,6 +327,7 @@ def verify(config, out):
 
 
 def main():
+    console.force_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("preview", "apply", "verify"))
     parser.add_argument("--config", default=str(pipeline.DEFAULT_CONFIG))

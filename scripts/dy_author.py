@@ -12,7 +12,7 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager, redirect_stdout
 from datetime import datetime, timezone
-import fcntl
+import file_lock
 import hashlib
 import io
 import json
@@ -26,6 +26,7 @@ import uuid
 
 import author_docs
 import author_works
+import console
 import library
 import pipeline
 import question_bank
@@ -43,11 +44,11 @@ def locked(path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        file_lock.lock(handle)
         try:
             yield
         finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            file_lock.unlock(handle)
 
 
 def runs_root(config):
@@ -119,7 +120,7 @@ def checked_input(run, state):
     raw = (source_run / "input.txt").read_text(encoding="utf-8")
     mode, text = parse_input(raw)
     expected = state.get("input_sha256")
-    if expected and hashlib.sha256(raw.encode()).hexdigest() != expected:
+    if expected and hashlib.sha256(raw.encode("utf-8")).hexdigest() != expected:
         raise ValueError("AUTHOR_INPUT_CHANGED：输入与已规划批次不一致，请用当前显式 /dy-author 命令建立新批次。")
     if state.get("planned") and mode != state.get("mode"):
         raise ValueError("AUTHOR_INPUT_CHANGED：当前命令模式与已规划批次不一致。")
@@ -185,7 +186,7 @@ def plan(run, state, config):
     raw, mode, text = checked_input(run, state)
     if state["planned"]:
         return report(state)
-    state.update(mode=mode, input_sha256=hashlib.sha256(raw.encode()).hexdigest())
+    state.update(mode=mode, input_sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest())
     if mode == "supplement":
         return plan_supplement(run, state, config)
     selected = author_works.select_official_url(text)
@@ -461,7 +462,8 @@ def prepare_item(run, state, item, config):
     try:
         initial_config = config
         attempted = item.get("browser_recovery", {}).get("attempted")
-        browser_flow = (config.get("browser") == "chrome" and pipeline.sys.platform == "darwin"
+        browser_flow = (config.get("browser") == "chrome"
+                        and pipeline.douyin_access.browser_recovery_available()
                         and config.get("auto_browser_recovery", False) is True and not attempted)
         if browser_flow and config.get("prefer_browser_media", False):
             initial_config = dict(config, _browser_media_only=True)
@@ -747,7 +749,7 @@ def record_commit_usage(run, vid, target, questions, seconds):
     merged = [q for q in questions if q["action"] == "merge"]
     if merged:
         usage.record_text(entry, "read", "merge_targets",
-                          "\n".join(usage.file_text(Path(json.loads((run / "config.json").read_text())["vault"]) / q["target"])
+                          "\n".join(usage.file_text(Path(json.loads((run / "config.json").read_text(encoding="utf-8"))["vault"]) / q["target"])
                                     for q in merged))
     ready_at = entry.get("ready_at")
     if ready_at:
@@ -819,6 +821,7 @@ def mark_item(run, state, config, vid, status):
 
 
 def main():
+    console.force_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(pipeline.DEFAULT_CONFIG))
     commands = parser.add_subparsers(dest="command", required=True)

@@ -76,4 +76,4 @@ def load_state(path, changes):
 
 
 def encode_state(state):
-    return (json.dumps(state, ensure_ascii=False, indent=2) + "\n").encode()
+    return (json.dumps(state, ensure_ascii=False, indent=2) + "\n").encode("utf-8")

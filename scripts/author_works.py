@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import browser_cache
+import console
 import douyin_access
 import pipeline
 
@@ -425,6 +426,7 @@ async def run(source: str, config: dict, *, max_pages: int = MAX_PAGES,
 
 
 def main() -> int:
+    console.force_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, help="一条抖音作品链接或完整分享文本")
     parser.add_argument("--config", default=str(pipeline.DEFAULT_CONFIG))
